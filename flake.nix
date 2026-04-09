@@ -157,9 +157,9 @@
                 mkdir -p "\$(dirname "\$PSCHT_BIN")"
                 cp "\$PSCHT_UNSIGNED" "\$PSCHT_BIN"
                 chmod +x "\$PSCHT_BIN"
-                IDENTITY=\$(security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')
+                IDENTITY=\$(/usr/bin/security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')
                 if [ -n "\$IDENTITY" ]; then
-                  codesign --force --sign "\$IDENTITY" "\$PSCHT_BIN" 2>/dev/null
+                  /usr/bin/codesign --force --sign "\$IDENTITY" "\$PSCHT_BIN" 2>/dev/null
                 fi
               fi
 
@@ -224,14 +224,14 @@
                 if cfg.signingIdentity != null then
                   ''IDENTITY="${cfg.signingIdentity}"''
                 else
-                  ''IDENTITY=$(security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')''
+                  ''IDENTITY=$(/usr/bin/security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')''
               }
 
               if [ -n "$IDENTITY" ]; then
                 mkdir -p "$(dirname "$PSCHT_BIN")"
                 cp "$PSCHT_UNSIGNED" "$PSCHT_BIN"
                 chmod +x "$PSCHT_BIN"
-                codesign --force --sign "$IDENTITY" "$PSCHT_BIN" 2>/dev/null
+                /usr/bin/codesign --force --sign "$IDENTITY" "$PSCHT_BIN" 2>/dev/null
                 run echo "pscht: signed with $IDENTITY"
               else
                 run echo "pscht: WARNING - no codesigning identity found, biometrics will not work"
