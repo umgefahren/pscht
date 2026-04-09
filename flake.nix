@@ -216,6 +216,8 @@
           config = lib.mkIf cfg.enable {
             home.packages = [ cfg.package ];
 
+            xdg.configFile."fish/completions/pscht.fish".source = ./completions/pscht.fish;
+
             home.activation.pscht-codesign = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
               PSCHT_UNSIGNED="${cfg.package}/bin/pscht-unsigned"
               PSCHT_BIN="$HOME/.local/bin/pscht"
