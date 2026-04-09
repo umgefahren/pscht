@@ -229,6 +229,7 @@
 
               if [ -n "$IDENTITY" ]; then
                 mkdir -p "$(dirname "$PSCHT_BIN")"
+                [ -f "$PSCHT_BIN" ] && chmod u+w "$PSCHT_BIN"
                 cp "$PSCHT_UNSIGNED" "$PSCHT_BIN"
                 chmod +x "$PSCHT_BIN"
                 /usr/bin/codesign --force --sign "$IDENTITY" "$PSCHT_BIN" 2>/dev/null
