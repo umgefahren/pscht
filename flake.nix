@@ -3,10 +3,11 @@
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
+    swiftix.url = "github:stillwind-ai/swiftix";
   };
 
   outputs =
-    { self, nixpkgs }:
+    { self, nixpkgs, swiftix }:
     let
       supportedSystems = [
         "aarch64-darwin"
@@ -19,132 +20,27 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-
-          swift-argument-parser = pkgs.fetchFromGitHub {
-            owner = "apple";
-            repo = "swift-argument-parser";
-            rev = "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b";
-            hash = "sha256-90ECc3iEmxvOUk9iLKbQdQEz88dOisPqWsJLOFcKUV8=";
-          };
-          swift-subprocess = pkgs.fetchFromGitHub {
-            owner = "swiftlang";
-            repo = "swift-subprocess";
-            rev = "13d087685b95d64d6aac9b94500d347bbe84c39b";
-            hash = "sha256-8Ujur2TwISoXo9LZ2Kev8v0uGx/RZyJqyZ4sNi7Q6/4=";
-          };
-          swift-system = pkgs.fetchFromGitHub {
-            owner = "apple";
-            repo = "swift-system";
-            rev = "7c6ad0fc39d0763e0b699210e4124afd5041c5df";
-            hash = "sha256-bfxm2WS+4qcgSzheWTvRloDAIIIHzPZ8SaAZq9bWmSc=";
-          };
-
-          workspaceState = builtins.toJSON {
-            object = {
-              artifacts = [ ];
-              dependencies = [
-                {
-                  basedOn = null;
-                  packageRef = {
-                    identity = "swift-argument-parser";
-                    kind = "remoteSourceControl";
-                    location = "https://github.com/apple/swift-argument-parser.git";
-                    name = "swift-argument-parser";
-                  };
-                  state = {
-                    checkoutState = {
-                      revision = "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b";
-                      version = "1.7.1";
-                    };
-                    name = "sourceControlCheckout";
-                  };
-                  subpath = "swift-argument-parser";
-                }
-                {
-                  basedOn = null;
-                  packageRef = {
-                    identity = "swift-subprocess";
-                    kind = "remoteSourceControl";
-                    location = "https://github.com/swiftlang/swift-subprocess.git";
-                    name = "Subprocess";
-                  };
-                  state = {
-                    checkoutState = {
-                      revision = "13d087685b95d64d6aac9b94500d347bbe84c39b";
-                      version = "0.4.0";
-                    };
-                    name = "sourceControlCheckout";
-                  };
-                  subpath = "swift-subprocess";
-                }
-                {
-                  basedOn = null;
-                  packageRef = {
-                    identity = "swift-system";
-                    kind = "remoteSourceControl";
-                    location = "https://github.com/apple/swift-system";
-                    name = "swift-system";
-                  };
-                  state = {
-                    checkoutState = {
-                      revision = "7c6ad0fc39d0763e0b699210e4124afd5041c5df";
-                      version = "1.6.4";
-                    };
-                    name = "sourceControlCheckout";
-                  };
-                  subpath = "swift-system";
-                }
-              ];
-              prebuilts = [ ];
-            };
-            version = 7;
-          };
+          mkSwiftPackage = swiftix.lib.mkSwiftPackage { inherit pkgs; };
+          swiftpm2nixHelpers = swiftix.lib.swiftpm2nixHelpers { inherit pkgs; };
         in
         {
           default = self.packages.${system}.pscht;
 
-          pscht = pkgs.stdenvNoCC.mkDerivation {
+          pscht = mkSwiftPackage {
             pname = "pscht";
             version = "0.1.0";
-
             src = pkgs.lib.cleanSource ./.;
+            swift = swiftix.packages.${system}.swift-6_3;
+            swiftpmGenerated = swiftpm2nixHelpers ./nix;
+            executableName = "pscht";
 
-            # Needs Xcode toolchain (Swift 6.3 not in nixpkgs)
-            __noChroot = true;
-
-            nativeBuildInputs = [ pkgs.xcbuild ];
-
-            DEVELOPER_DIR = "/Applications/Xcode.app/Contents/Developer";
-            SDKROOT = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk";
-
-            configurePhase = ''
-              runHook preConfigure
-
-              export HOME=$(mktemp -d)
-
-              mkdir -p .build/checkouts
-              ln -s ${swift-argument-parser} .build/checkouts/swift-argument-parser
-              ln -s ${swift-subprocess} .build/checkouts/swift-subprocess
-              ln -s ${swift-system} .build/checkouts/swift-system
-
-              cat > .build/workspace-state.json << 'WSEOF'
-              ${workspaceState}
-              WSEOF
-
-              runHook postConfigure
-            '';
-
-            buildPhase = ''
-              runHook preBuild
-              xcrun swift build -c release --disable-sandbox
-              runHook postBuild
-            '';
-
+            # pscht needs entitlements for Keychain biometrics, so install
+            # the unsigned binary + a wrapper that code-signs on first run.
             installPhase = ''
               runHook preInstall
 
               mkdir -p $out/bin $out/share/pscht
-              cp "$(xcrun swift build -c release --disable-sandbox --show-bin-path)/pscht" $out/bin/pscht-unsigned
+              cp "$(find .build/release -maxdepth 1 -name pscht -type f)" $out/bin/pscht-unsigned
               cp ${./pscht.entitlements} $out/share/pscht/pscht.entitlements
 
               # Wrapper that code-signs on first run
@@ -247,10 +143,14 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          swift = swiftix.packages.${system}.swift-6_3;
         in
         {
           default = pkgs.mkShell {
-            buildInputs = [ ];
+            packages = [ swift pkgs.apple-sdk_15 ];
+            shellHook = ''
+              export SDKROOT="${pkgs.apple-sdk_15}/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+            '';
           };
         }
       );

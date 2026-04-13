@@ -1,0 +1,60 @@
+{
+  "object": {
+    "artifacts": [],
+    "dependencies": [
+      {
+        "basedOn": null,
+        "packageRef": {
+          "identity": "swift-argument-parser",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/apple/swift-argument-parser.git",
+          "name": "swift-argument-parser"
+        },
+        "state": {
+          "checkoutState": {
+            "revision": "626b5b7b2f45e1b0b1c6f4a309296d1d21d7311b",
+            "version": "1.7.1"
+          },
+          "name": "sourceControlCheckout"
+        },
+        "subpath": "swift-argument-parser"
+      },
+      {
+        "basedOn": null,
+        "packageRef": {
+          "identity": "swift-subprocess",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/swiftlang/swift-subprocess.git",
+          "name": "Subprocess"
+        },
+        "state": {
+          "checkoutState": {
+            "revision": "13d087685b95d64d6aac9b94500d347bbe84c39b",
+            "version": "0.4.0"
+          },
+          "name": "sourceControlCheckout"
+        },
+        "subpath": "swift-subprocess"
+      },
+      {
+        "basedOn": null,
+        "packageRef": {
+          "identity": "swift-system",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/apple/swift-system",
+          "name": "swift-system"
+        },
+        "state": {
+          "checkoutState": {
+            "revision": "7c6ad0fc39d0763e0b699210e4124afd5041c5df",
+            "version": "1.6.4"
+          },
+          "name": "sourceControlCheckout"
+        },
+        "subpath": "swift-system"
+      }
+    ],
+    "prebuilts": []
+  },
+  "version": 7
+}
