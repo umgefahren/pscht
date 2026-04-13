@@ -34,16 +34,14 @@
             swiftpmGenerated = swiftpm2nixHelpers ./nix;
             executableName = "pscht";
 
-            # pscht needs entitlements for Keychain biometrics, so install
-            # the unsigned binary + a wrapper that code-signs on first run.
-            installPhase = ''
-              runHook preInstall
-
-              mkdir -p $out/bin $out/share/pscht
-              cp "$(find .build/release -maxdepth 1 -name pscht -type f)" $out/bin/pscht-unsigned
+            # pscht needs entitlements for Keychain biometrics. The default
+            # installPhase puts the binary at $out/bin/pscht. Rename it to
+            # pscht-unsigned and add a wrapper that code-signs on first run.
+            postInstall = ''
+              mv $out/bin/pscht $out/bin/pscht-unsigned
+              mkdir -p $out/share/pscht
               cp ${./pscht.entitlements} $out/share/pscht/pscht.entitlements
 
-              # Wrapper that code-signs on first run
               cat > $out/bin/pscht << WRAPPER
               #!/bin/bash
               PSCHT_BIN="\$HOME/.local/bin/pscht"
@@ -62,8 +60,6 @@
               exec "\$PSCHT_BIN" "\$@"
               WRAPPER
               chmod +x $out/bin/pscht
-
-              runHook postInstall
             '';
 
             meta = {
