@@ -11,6 +11,7 @@ struct Pscht: AsyncParsableCommand {
             RunCommand.self,
             ListCommand.self,
             RemoveCommand.self,
+            MigrateCommand.self,
         ]
     )
 }

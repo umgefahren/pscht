@@ -1,11 +1,6 @@
 import ArgumentParser
 
 struct BiometricOptions: ParsableArguments {
-    @Flag(name: .long, help: "Skip biometric authentication")
+    @Flag(name: .long, help: "Store secret without biometric protection")
     var noBio: Bool = false
-
-    func authenticateIfNeeded(reason: String) throws {
-        guard !noBio else { return }
-        _ = try Keychain.authenticate(reason: reason)
-    }
 }

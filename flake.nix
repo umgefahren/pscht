@@ -52,8 +52,11 @@
                 cp "\$PSCHT_UNSIGNED" "\$PSCHT_BIN"
                 chmod +x "\$PSCHT_BIN"
                 IDENTITY=\$(/usr/bin/security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')
+                ENTITLEMENTS="$out/share/pscht/pscht.entitlements"
                 if [ -n "\$IDENTITY" ]; then
-                  /usr/bin/codesign --force --sign "\$IDENTITY" "\$PSCHT_BIN" 2>/dev/null
+                  /usr/bin/codesign --force --sign "\$IDENTITY" --entitlements "\$ENTITLEMENTS" "\$PSCHT_BIN"
+                else
+                  echo "pscht: ERROR - no codesigning identity found, keychain biometrics will not work" >&2
                 fi
               fi
 
@@ -126,7 +129,8 @@
                 [ -f "$PSCHT_BIN" ] && chmod u+w "$PSCHT_BIN"
                 cp "$PSCHT_UNSIGNED" "$PSCHT_BIN"
                 chmod +x "$PSCHT_BIN"
-                /usr/bin/codesign --force --sign "$IDENTITY" "$PSCHT_BIN" 2>/dev/null
+                ENTITLEMENTS="${cfg.package}/share/pscht/pscht.entitlements"
+                /usr/bin/codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" "$PSCHT_BIN"
                 run echo "pscht: signed with $IDENTITY"
               else
                 run echo "pscht: WARNING - no codesigning identity found, biometrics will not work"

@@ -6,8 +6,6 @@ struct GetCommand: ParsableCommand {
         abstract: "Retrieve a single secret"
     )
 
-    @OptionGroup var bio: BiometricOptions
-
     @Argument(help: "The namespace")
     var namespace: String
 
@@ -15,7 +13,6 @@ struct GetCommand: ParsableCommand {
     var key: String
 
     mutating func run() throws {
-        try bio.authenticateIfNeeded(reason: "read '\(key)' from '\(namespace)'")
         let value = try Keychain.retrieve(namespace: namespace, key: key)
         print(value, terminator: "")
     }

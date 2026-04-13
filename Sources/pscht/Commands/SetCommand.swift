@@ -35,10 +35,8 @@ struct SetCommand: ParsableCommand {
             pairs.append((key, value))
         }
 
-        try bio.authenticateIfNeeded(reason: "store secrets in '\(namespace)'")
-
         for (key, value) in pairs {
-            try Keychain.store(namespace: namespace, key: key, value: value)
+            try Keychain.store(namespace: namespace, key: key, value: value, biometricProtected: !bio.noBio)
         }
     }
 }

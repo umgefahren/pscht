@@ -1,5 +1,6 @@
 import ArgumentParser
 import Foundation
+import LocalAuthentication
 import Subprocess
 
 struct RunCommand: AsyncParsableCommand {
@@ -7,8 +8,6 @@ struct RunCommand: AsyncParsableCommand {
         commandName: "run",
         abstract: "Run a command with secrets as environment variables"
     )
-
-    @OptionGroup var bio: BiometricOptions
 
     @Argument(help: "Comma-separated namespace(s)")
     var namespaces: String
@@ -23,14 +22,16 @@ struct RunCommand: AsyncParsableCommand {
 
         let nsList = namespaces.split(separator: ",").map(String.init)
 
-        try bio.authenticateIfNeeded(reason: "run with secrets from \(nsList.joined(separator: ", "))")
+        let context = try Keychain.preAuthenticate(
+            reason: "run with secrets from \(nsList.joined(separator: ", "))"
+        )
 
         var envOverrides: [Environment.Key: String?] = [:]
 
         for ns in nsList {
             let keys = try Keychain.listKeys(namespace: ns)
             for key in keys {
-                let value = try Keychain.retrieve(namespace: ns, key: key)
+                let value = try Keychain.retrieve(namespace: ns, key: key, context: context)
                 envOverrides[Environment.Key(stringLiteral: key)] = value
             }
         }

@@ -35,20 +35,17 @@ enum Keychain {
         "\(servicePrefix)\(namespace)"
     }
 
-    /// Authenticate with Touch ID. Returns an authenticated LAContext.
-    static func authenticate(reason: String = "access secrets") throws -> LAContext {
+    /// Pre-authenticate an LAContext for reuse across multiple keychain operations.
+    /// This avoids multiple Touch ID prompts when retrieving several secrets.
+    static func preAuthenticate(reason: String) throws -> LAContext {
         let context = LAContext()
-        var error: NSError?
-
-        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            throw KeychainError.authFailed(error?.localizedDescription ?? "Biometrics not available")
-        }
+        context.localizedReason = reason
 
         let semaphore = DispatchSemaphore(value: 0)
         var authError: NSError?
 
         context.evaluatePolicy(
-            .deviceOwnerAuthenticationWithBiometrics,
+            .deviceOwnerAuthentication,
             localizedReason: "pscht: \(reason)"
         ) { success, evaluateError in
             if !success {
@@ -66,7 +63,7 @@ enum Keychain {
         return context
     }
 
-    static func store(namespace: String, key: String, value: String) throws {
+    static func store(namespace: String, key: String, value: String, biometricProtected: Bool = true) throws {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.unexpectedData
         }
@@ -81,13 +78,27 @@ enum Keychain {
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
-        let addQuery: [String: Any] = [
+        var addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecValueData as String: data,
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
         ]
+
+        if biometricProtected {
+            var error: Unmanaged<CFError>?
+            guard let access = SecAccessControlCreateWithFlags(
+                nil,
+                kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly,
+                .biometryCurrentSet,
+                &error
+            ) else {
+                throw KeychainError.storeFailed(errSecParam)
+            }
+            addQuery[kSecAttrAccessControl as String] = access
+        } else {
+            addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+        }
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -95,16 +106,20 @@ enum Keychain {
         }
     }
 
-    static func retrieve(namespace: String, key: String) throws -> String {
+    static func retrieve(namespace: String, key: String, context: LAContext? = nil) throws -> String {
         let service = serviceName(for: namespace)
 
-        let query: [String: Any] = [
+        var query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
         ]
+
+        if let context {
+            query[kSecUseAuthenticationContext as String] = context
+        }
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -117,7 +132,7 @@ enum Keychain {
             return value
         case errSecItemNotFound:
             throw KeychainError.notFound(namespace: namespace, key: key)
-        case errSecAuthFailed, errSecUserCanceled:
+        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
             throw KeychainError.authFailed("cancelled")
         default:
             throw KeychainError.queryFailed(status)
