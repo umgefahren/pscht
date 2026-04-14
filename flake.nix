@@ -144,6 +144,9 @@ WRAPPER
                   ''IDENTITY=$(/usr/bin/security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')''
               }
 
+              # Clean up legacy binary from pre-app-bundle versions
+              rm -f "$HOME/.local/bin/pscht"
+
               if [ -n "$IDENTITY" ]; then
                 # Copy the app bundle (needs to be writable for signing)
                 rm -rf "$PSCHT_APP"
