@@ -7,7 +7,8 @@ struct MigrateCommand: ParsableCommand {
     )
 
     mutating func run() throws {
-        let namespaces = try Keychain.listNamespaces()
+        // Read from legacy keychain, write to data protection keychain
+        let namespaces = try Keychain.listNamespaces(useDataProtection: false)
 
         guard !namespaces.isEmpty else {
             print("No namespaces found, nothing to migrate.")
@@ -16,9 +17,9 @@ struct MigrateCommand: ParsableCommand {
 
         var total = 0
         for ns in namespaces {
-            let keys = try Keychain.listKeys(namespace: ns)
+            let keys = try Keychain.listKeys(namespace: ns, useDataProtection: false)
             for key in keys {
-                let value = try Keychain.retrieve(namespace: ns, key: key)
+                let value = try Keychain.retrieve(namespace: ns, key: key, useDataProtection: false)
                 try Keychain.store(namespace: ns, key: key, value: value, biometricProtected: true)
                 total += 1
             }

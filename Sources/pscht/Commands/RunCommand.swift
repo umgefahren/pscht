@@ -1,6 +1,5 @@
 import ArgumentParser
 import Foundation
-import LocalAuthentication
 import Subprocess
 
 struct RunCommand: AsyncParsableCommand {
@@ -22,16 +21,15 @@ struct RunCommand: AsyncParsableCommand {
 
         let nsList = namespaces.split(separator: ",").map(String.init)
 
-        let context = try Keychain.preAuthenticate(
+        let context = try Keychain.authContext(
             reason: "run with secrets from \(nsList.joined(separator: ", "))"
         )
 
         var envOverrides: [Environment.Key: String?] = [:]
 
         for ns in nsList {
-            let keys = try Keychain.listKeys(namespace: ns)
-            for key in keys {
-                let value = try Keychain.retrieve(namespace: ns, key: key, context: context)
+            let pairs = try Keychain.retrieveAll(namespace: ns, context: context)
+            for (key, value) in pairs {
                 envOverrides[Environment.Key(stringLiteral: key)] = value
             }
         }

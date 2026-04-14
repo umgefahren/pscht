@@ -34,34 +34,46 @@
             swiftpmGenerated = swiftpm2nixHelpers ./nix;
             executableName = "pscht";
 
-            # pscht needs entitlements for Keychain biometrics. The default
-            # installPhase puts the binary at $out/bin/pscht. Rename it to
-            # pscht-unsigned and add a wrapper that code-signs on first run.
+            # Package the binary into an app bundle structure for signing.
+            # Biometric keychain ACLs require the data protection keychain,
+            # which needs a provisioning profile embedded in an app bundle.
             postInstall = ''
-              mv $out/bin/pscht $out/bin/pscht-unsigned
-              mkdir -p $out/share/pscht
-              cp ${./pscht.entitlements} $out/share/pscht/pscht.entitlements
+              # Build the .app bundle
+              BUNDLE="$out/Applications/pscht.app/Contents"
+              mkdir -p "$BUNDLE/MacOS"
+              mv $out/bin/pscht "$BUNDLE/MacOS/pscht"
+              cp ${./Info.plist} "$BUNDLE/Info.plist"
 
-              cat > $out/bin/pscht << WRAPPER
-              #!/bin/bash
-              PSCHT_BIN="\$HOME/.local/bin/pscht"
-              PSCHT_UNSIGNED="$out/bin/pscht-unsigned"
+              # pscht-sign: embeds provisioning profile, extracts its entitlements,
+              # and signs the app bundle.
+              cat > $out/bin/pscht-sign << 'SIGN'
+#!/bin/bash
+set -euo pipefail
+BUNDLE="$1"
+IDENTITY="$2"
+PROFILE="$3"
 
-              if [ ! -f "\$PSCHT_BIN" ] || [ "\$PSCHT_UNSIGNED" -nt "\$PSCHT_BIN" ]; then
-                mkdir -p "\$(dirname "\$PSCHT_BIN")"
-                cp "\$PSCHT_UNSIGNED" "\$PSCHT_BIN"
-                chmod +x "\$PSCHT_BIN"
-                IDENTITY=\$(/usr/bin/security find-identity -v -p codesigning | head -1 | sed 's/.*"\(.*\)".*/\1/')
-                ENTITLEMENTS="$out/share/pscht/pscht.entitlements"
-                if [ -n "\$IDENTITY" ]; then
-                  /usr/bin/codesign --force --sign "\$IDENTITY" --entitlements "\$ENTITLEMENTS" "\$PSCHT_BIN"
-                else
-                  echo "pscht: ERROR - no codesigning identity found, keychain biometrics will not work" >&2
-                fi
-              fi
+# Embed provisioning profile
+cp "$PROFILE" "$BUNDLE/Contents/embedded.provisionprofile"
 
-              exec "\$PSCHT_BIN" "\$@"
-              WRAPPER
+# Extract entitlements from the provisioning profile
+DECODED=$(mktemp)
+ENTITLEMENTS=$(mktemp)
+trap 'rm -f "$DECODED" "$ENTITLEMENTS"' EXIT
+/usr/bin/security cms -D -i "$PROFILE" > "$DECODED"
+/usr/libexec/PlistBuddy -c "Print :Entitlements" -x "$DECODED" > "$ENTITLEMENTS"
+
+# Sign with the profile's entitlements
+/usr/bin/codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" "$BUNDLE"
+SIGN
+              chmod +x $out/bin/pscht-sign
+
+              # Wrapper script for direct invocation
+              cat > $out/bin/pscht << 'WRAPPER'
+#!/bin/bash
+PSCHT_APP="$HOME/.local/share/pscht/pscht.app"
+exec "$PSCHT_APP/Contents/MacOS/pscht" "$@"
+WRAPPER
               chmod +x $out/bin/pscht
             '';
 
@@ -106,6 +118,14 @@
                 If null, pscht will auto-detect the first available identity.
               '';
             };
+
+            provisioningProfile = lib.mkOption {
+              type = lib.types.str;
+              description = ''
+                Path to a macOS provisioning profile for the dev.pscht App ID.
+                Required for biometric keychain ACLs. Can be a sops secret path.
+              '';
+            };
           };
 
           config = lib.mkIf cfg.enable {
@@ -114,8 +134,8 @@
             xdg.configFile."fish/completions/pscht.fish".source = ./completions/pscht.fish;
 
             home.activation.pscht-codesign = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
-              PSCHT_UNSIGNED="${cfg.package}/bin/pscht-unsigned"
-              PSCHT_BIN="$HOME/.local/bin/pscht"
+              PSCHT_APP="$HOME/.local/share/pscht/pscht.app"
+              SRC_BUNDLE="${cfg.package}/Applications/pscht.app"
 
               ${
                 if cfg.signingIdentity != null then
@@ -125,13 +145,16 @@
               }
 
               if [ -n "$IDENTITY" ]; then
-                mkdir -p "$(dirname "$PSCHT_BIN")"
-                [ -f "$PSCHT_BIN" ] && chmod u+w "$PSCHT_BIN"
-                cp "$PSCHT_UNSIGNED" "$PSCHT_BIN"
-                chmod +x "$PSCHT_BIN"
-                ENTITLEMENTS="${cfg.package}/share/pscht/pscht.entitlements"
-                /usr/bin/codesign --force --sign "$IDENTITY" --entitlements "$ENTITLEMENTS" "$PSCHT_BIN"
-                run echo "pscht: signed with $IDENTITY"
+                # Copy the app bundle (needs to be writable for signing)
+                rm -rf "$PSCHT_APP"
+                mkdir -p "$(dirname "$PSCHT_APP")"
+                cp -R "$SRC_BUNDLE" "$PSCHT_APP"
+                chmod -R u+w "$PSCHT_APP"
+
+                # Sign with provisioning profile and entitlements
+                ${cfg.package}/bin/pscht-sign "$PSCHT_APP" "$IDENTITY" "${cfg.provisioningProfile}"
+
+                run echo "pscht: signed app bundle with $IDENTITY"
               else
                 run echo "pscht: WARNING - no codesigning identity found, biometrics will not work"
               fi

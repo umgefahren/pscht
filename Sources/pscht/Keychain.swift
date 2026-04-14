@@ -35,17 +35,22 @@ enum Keychain {
         "\(servicePrefix)\(namespace)"
     }
 
-    /// Pre-authenticate an LAContext for reuse across multiple keychain operations.
-    /// This avoids multiple Touch ID prompts when retrieving several secrets.
-    static func preAuthenticate(reason: String) throws -> LAContext {
+    /// Pre-authenticate with Touch ID and return the context for keychain operations.
+    /// Passing a biometrically-authenticated context to keychain queries satisfies
+    /// .biometryCurrentSet items without additional prompts.
+    static func authContext(reason: String) throws -> LAContext {
         let context = LAContext()
-        context.localizedReason = reason
+
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
+            throw KeychainError.authFailed(error?.localizedDescription ?? "Biometrics not available")
+        }
 
         let semaphore = DispatchSemaphore(value: 0)
         var authError: NSError?
 
         context.evaluatePolicy(
-            .deviceOwnerAuthentication,
+            .deviceOwnerAuthenticationWithBiometrics,
             localizedReason: "pscht: \(reason)"
         ) { success, evaluateError in
             if !success {
@@ -75,6 +80,7 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
+            kSecUseDataProtectionKeychain as String: true,
         ]
         SecItemDelete(deleteQuery as CFDictionary)
 
@@ -83,6 +89,7 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecValueData as String: data,
+            kSecUseDataProtectionKeychain as String: true,
         ]
 
         if biometricProtected {
@@ -106,7 +113,7 @@ enum Keychain {
         }
     }
 
-    static func retrieve(namespace: String, key: String, context: LAContext? = nil) throws -> String {
+    static func retrieve(namespace: String, key: String, context: LAContext? = nil, useDataProtection: Bool = true) throws -> String {
         let service = serviceName(for: namespace)
 
         var query: [String: Any] = [
@@ -115,6 +122,7 @@ enum Keychain {
             kSecAttrAccount as String: key,
             kSecReturnData as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne,
+            kSecUseDataProtectionKeychain as String: useDataProtection,
         ]
 
         if let context {
@@ -132,8 +140,58 @@ enum Keychain {
             return value
         case errSecItemNotFound:
             throw KeychainError.notFound(namespace: namespace, key: key)
-        case errSecAuthFailed, errSecUserCanceled, errSecInteractionNotAllowed:
+        case errSecAuthFailed:
+            throw KeychainError.authFailed("authentication failed")
+        case errSecUserCanceled:
             throw KeychainError.authFailed("cancelled")
+        case errSecInteractionNotAllowed:
+            throw KeychainError.authFailed("interaction not allowed")
+        default:
+            throw KeychainError.queryFailed(status)
+        }
+    }
+
+    /// Retrieve all key-value pairs in a namespace with a single keychain query (one biometric prompt).
+    static func retrieveAll(namespace: String, context: LAContext? = nil) throws -> [(String, String)] {
+        let service = serviceName(for: namespace)
+
+        var query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecMatchLimit as String: kSecMatchLimitAll,
+            kSecReturnAttributes as String: true,
+            kSecReturnData as String: true,
+            kSecUseDataProtectionKeychain as String: true,
+        ]
+
+        if let context {
+            query[kSecUseAuthenticationContext as String] = context
+        }
+
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+
+        switch status {
+        case errSecSuccess:
+            guard let items = result as? [[String: Any]] else {
+                return []
+            }
+            return items.compactMap { item in
+                guard let account = item[kSecAttrAccount as String] as? String,
+                      let data = item[kSecValueData as String] as? Data,
+                      let value = String(data: data, encoding: .utf8) else {
+                    return nil
+                }
+                return (account, value)
+            }
+        case errSecItemNotFound:
+            return []
+        case errSecAuthFailed:
+            throw KeychainError.authFailed("authentication failed")
+        case errSecUserCanceled:
+            throw KeychainError.authFailed("cancelled")
+        case errSecInteractionNotAllowed:
+            throw KeychainError.authFailed("interaction not allowed")
         default:
             throw KeychainError.queryFailed(status)
         }
@@ -145,6 +203,7 @@ enum Keychain {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
+            kSecUseDataProtectionKeychain as String: true,
         ]
 
         let status = SecItemDelete(query as CFDictionary)
@@ -158,6 +217,7 @@ enum Keychain {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
+            kSecUseDataProtectionKeychain as String: true,
         ]
 
         let status = SecItemDelete(query as CFDictionary)
@@ -166,13 +226,14 @@ enum Keychain {
         }
     }
 
-    static func listKeys(namespace: String) throws -> [String] {
+    static func listKeys(namespace: String, useDataProtection: Bool = true) throws -> [String] {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
+            kSecUseDataProtectionKeychain as String: useDataProtection,
         ]
 
         var result: AnyObject?
@@ -191,11 +252,12 @@ enum Keychain {
         }
     }
 
-    static func listNamespaces() throws -> [String] {
+    static func listNamespaces(useDataProtection: Bool = true) throws -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
+            kSecUseDataProtectionKeychain as String: useDataProtection,
         ]
 
         var result: AnyObject?

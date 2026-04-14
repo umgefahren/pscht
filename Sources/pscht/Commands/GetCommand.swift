@@ -13,7 +13,8 @@ struct GetCommand: ParsableCommand {
     var key: String
 
     mutating func run() throws {
-        let value = try Keychain.retrieve(namespace: namespace, key: key)
+        let context = try Keychain.authContext(reason: "read '\(key)' from '\(namespace)'")
+        let value = try Keychain.retrieve(namespace: namespace, key: key, context: context)
         print(value, terminator: "")
     }
 }

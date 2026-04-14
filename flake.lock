@@ -16,9 +16,44 @@
         "type": "github"
       }
     },
+    "nixpkgs_2": {
+      "locked": {
+        "lastModified": 1775888245,
+        "narHash": "sha256-nwASzrRDD1JBEu/o8ekKYEXm/oJW6EMCzCRdrwcLe90=",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "13043924aaa7375ce482ebe2494338e058282925",
+        "type": "github"
+      },
+      "original": {
+        "owner": "NixOS",
+        "ref": "nixpkgs-unstable",
+        "repo": "nixpkgs",
+        "type": "github"
+      }
+    },
     "root": {
       "inputs": {
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "swiftix": "swiftix"
+      }
+    },
+    "swiftix": {
+      "inputs": {
+        "nixpkgs": "nixpkgs_2"
+      },
+      "locked": {
+        "lastModified": 1776117047,
+        "narHash": "sha256-1Dt0Y4VhRoMz4Izu3qvjpddGF2+9mMnMrYQtlnT4ceM=",
+        "owner": "stillwind-ai",
+        "repo": "swiftix",
+        "rev": "02099cb3b95eb2ab857ae3a965b6910ae4919bf4",
+        "type": "github"
+      },
+      "original": {
+        "owner": "stillwind-ai",
+        "repo": "swiftix",
+        "type": "github"
       }
     }
   },
