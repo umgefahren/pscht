@@ -68,7 +68,7 @@ enum Keychain {
         return context
     }
 
-    static func store(namespace: String, key: String, value: String, biometricProtected: Bool = true, context: LAContext? = nil) throws {
+    static func store(namespace: String, key: String, value: String, biometricProtected: Bool = true) throws {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.unexpectedData
         }
@@ -89,7 +89,6 @@ enum Keychain {
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecValueData as String: data,
-            kSecUseDataProtectionKeychain as String: true,
         ]
 
         if biometricProtected {
@@ -103,11 +102,9 @@ enum Keychain {
                 throw KeychainError.storeFailed(errSecParam)
             }
             addQuery[kSecAttrAccessControl as String] = access
-            if let context {
-                addQuery[kSecUseAuthenticationContext as String] = context
-            }
         } else {
             addQuery[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            addQuery[kSecUseDataProtectionKeychain as String] = true
         }
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
