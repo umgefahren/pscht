@@ -35,8 +35,10 @@ struct SetCommand: ParsableCommand {
             pairs.append((key, value))
         }
 
+        let context = !bio.noBio ? try Keychain.authContext(reason: "store secrets in '\(namespace)'") : nil
+
         for (key, value) in pairs {
-            try Keychain.store(namespace: namespace, key: key, value: value, biometricProtected: !bio.noBio)
+            try Keychain.store(namespace: namespace, key: key, value: value, biometricProtected: !bio.noBio, context: context)
         }
     }
 }
