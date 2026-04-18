@@ -9,10 +9,14 @@ struct InitCommand: AsyncParsableCommand {
         abstract: "Initialize a new TPM2-sealed vault (Linux)"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     @Flag(name: .long, help: "Skip PIN entry; seal with presence only (EC2/servers).")
     var noPin: Bool = false
 
     mutating func run() async throws {
+        timingOpts.apply()
+        defer { Timings.shared.report() }
         let ctx = CommandContext.shared
         guard let tpmStore = ctx.store as? TPM2VaultStore else {
             throw CleanExit.message("pscht init requires backend = \"tpm2\"")

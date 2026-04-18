@@ -7,7 +7,11 @@ struct MigrateCommand: ParsableCommand {
         abstract: "Re-store all secrets with biometric (Keychain ACL) protection"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     mutating func run() throws {
+        timingOpts.apply()
+        defer { Timings.shared.report() }
         let store = KeychainStore()
         let namespaces = try store.listNamespacesSync(useDataProtection: false)
 

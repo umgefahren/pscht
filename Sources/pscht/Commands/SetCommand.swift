@@ -11,6 +11,8 @@ struct SetCommand: AsyncParsableCommand {
         abstract: "Store secrets in a namespace"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     #if os(macOS)
     @OptionGroup var bio: BiometricOptions
     #endif
@@ -22,6 +24,8 @@ struct SetCommand: AsyncParsableCommand {
     var keys: [String]
 
     mutating func run() async throws {
+        timingOpts.apply()
+        defer { Timings.shared.report() }
         var pairs: [(String, String)] = []
         for key in keys {
             let prompt = "\(key): "

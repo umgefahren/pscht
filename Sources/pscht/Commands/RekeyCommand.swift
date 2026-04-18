@@ -24,6 +24,8 @@ struct RekeyCommand: AsyncParsableCommand {
         abstract: "Rotate the TPM-sealed master key (optionally changing PIN/mode)"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     @Flag(name: .long, help: "Prompt for a new PIN (requires pin mode).")
     var changePin: Bool = false
 
@@ -34,6 +36,8 @@ struct RekeyCommand: AsyncParsableCommand {
     var toPin: Bool = false
 
     mutating func run() async throws {
+        timingOpts.apply()
+        defer { Timings.shared.report() }
         let ctx = CommandContext.shared
         guard let store = ctx.store as? TPM2VaultStore else {
             throw CleanExit.message("pscht rekey requires backend = \"tpm2\"")

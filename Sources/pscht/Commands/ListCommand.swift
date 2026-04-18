@@ -6,10 +6,14 @@ struct ListCommand: AsyncParsableCommand {
         abstract: "List namespaces or keys within a namespace"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     @Argument(help: "Optional namespace to list keys for")
     var namespace: String?
 
     mutating func run() async throws {
+        timingOpts.apply()
+        defer { Timings.shared.report() }
         let store = CommandContext.shared.store
         if let namespace {
             let keys = try await store.listKeys(namespace: namespace)

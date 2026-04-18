@@ -53,7 +53,9 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
             throw SecretStoreError.vaultMissing
         }
 
-        let pin = try promptForPinIfNeeded(reason: reason)
+        let pin = try Timings.measureSync("PIN prompt") {
+            try promptForPinIfNeeded(reason: reason)
+        }
         let masterKey = try await deriveMasterKey(pin: pin)
 
         let blob: Data
@@ -62,11 +64,17 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
         } catch {
             throw SecretStoreError.vaultCorrupt("reading vault.enc: \(error.localizedDescription)")
         }
-        let (plaintext, _) = try VaultFile.open(blob: blob, key: masterKey)
+        let (plaintext, _) = try Timings.measureSync("vault decrypt (ChaCha20-Poly1305)") {
+            try VaultFile.open(blob: blob, key: masterKey)
+        }
 
         let vault: VaultState
         do {
-            vault = try JSONDecoder().decode(VaultState.self, from: plaintext)
+            vault = try Timings.measureSync("JSON decode") {
+                try JSONDecoder().decode(VaultState.self, from: plaintext)
+            }
+        } catch let error as SecretStoreError {
+            throw error
         } catch {
             throw SecretStoreError.vaultCorrupt("vault JSON: \(error.localizedDescription)")
         }
@@ -297,12 +305,17 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
     /// Derive the master vault key. Unseals `K_t` from the TPM and combines
     /// it with Argon2id(PIN) via HKDF-SHA256. In presence mode (no PIN), the
     /// Argon2 step is skipped and `K_p` is 32 zeros.
+    ///
+    /// Timing: `Timings.measure` doesn't support `~Copyable` returns, so we
+    /// bracket with `ContinuousClock.now` + `shared.record` directly.
     private func deriveMasterKey(pin: String?) async throws -> SymmetricKey {
+        let unsealStart = ContinuousClock.now
         let kt = try await TPM2Tools.unseal(
             sealedContextPath: sealedContextPath,
             pin: pin,
             config: TPM2Tools.Config(device: config.tpm2.device)
         )
+        Timings.shared.record("tpm2_unseal (incl. flushcontext)", ContinuousClock.now - unsealStart)
         return try deriveMasterKey(kt: kt, pin: pin)
     }
 
@@ -311,6 +324,7 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
         let kpBytes: Data
         if let pin, !pin.isEmpty {
             let salt = makeArgon2Salt()
+            let argonStart = ContinuousClock.now
             let kpSecret = try Argon2.hash(
                 password: Data(pin.utf8),
                 salt: salt,
@@ -320,6 +334,10 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
                     parallelism: UInt32(config.tpm2.argon2.parallelism)
                 )
             )
+            Timings.shared.record(
+                "Argon2id (\(config.tpm2.argon2.memoryKiB) KiB, t=\(config.tpm2.argon2.iterations))",
+                ContinuousClock.now - argonStart
+            )
             kpBytes = kpSecret.withBytes { buf in
                 Data(bytes: buf.baseAddress!, count: buf.count)
             }
@@ -327,6 +345,7 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
             kpBytes = Data(repeating: 0, count: 32)
         }
 
+        let hkdfStart = ContinuousClock.now
         // IKM = K_t || K_p
         var ikm = Data()
         kt.withBytes { buf in
@@ -346,6 +365,7 @@ final class TPM2VaultStore: SecretStore, @unchecked Sendable {
             ptr.initializeMemory(as: UInt8.self, repeating: 0)
         }
 
+        Timings.shared.record("HKDF-SHA256", ContinuousClock.now - hkdfStart)
         return derived
     }
 

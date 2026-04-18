@@ -8,6 +8,8 @@ struct RunCommand: AsyncParsableCommand {
         abstract: "Run a command with secrets as environment variables"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     @Argument(help: "Comma-separated namespace(s)")
     var namespaces: String
 
@@ -15,6 +17,13 @@ struct RunCommand: AsyncParsableCommand {
     var command: [String]
 
     mutating func run() async throws {
+        timingOpts.apply()
+        // Emit the report *before* execvp-style handoff takes over. We print
+        // before spawning the child rather than at end of run() because the
+        // child's termination status is rethrown as `ExitCode`, which bails
+        // out of the `defer`-after-return path on some ArgumentParser builds.
+        defer { Timings.shared.report() }
+
         guard !command.isEmpty else {
             throw CleanExit.message("No command specified")
         }
@@ -22,21 +31,29 @@ struct RunCommand: AsyncParsableCommand {
         let nsList = namespaces.split(separator: ",").map(String.init)
         let store = CommandContext.shared.store
 
+        // Inner steps of beginSession (PIN, tpm2_unseal, Argon2, etc.) are
+        // recorded individually — don't wrap here or we'd double-count.
         let session = try await store.beginSession(
             reason: "run with secrets from \(nsList.joined(separator: ", "))"
         )
 
         var envOverrides: [Environment.Key: String?] = [:]
 
-        for ns in nsList {
-            let pairs = try await store.retrieveAll(namespace: ns, session: session)
-            for (key, value) in pairs {
-                envOverrides[Environment.Key(stringLiteral: key)] = value
+        try await Timings.measure("retrieveAll (\(nsList.count) namespace(s))") {
+            for ns in nsList {
+                let pairs = try await store.retrieveAll(namespace: ns, session: session)
+                for (key, value) in pairs {
+                    envOverrides[Environment.Key(stringLiteral: key)] = value
+                }
             }
         }
 
         let resolved = resolveExecutable(command[0])
         FileHandle.standardError.write(Data("pscht: exec \(resolved)\n".utf8))
+
+        // Flush timings to stderr *before* the child starts writing to the
+        // same fd — otherwise they'd be interleaved with the child's output.
+        Timings.shared.report()
 
         let args = Arguments(command.dropFirst().map { String($0) })
 

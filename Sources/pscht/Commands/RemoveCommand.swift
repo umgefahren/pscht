@@ -6,6 +6,8 @@ struct RemoveCommand: AsyncParsableCommand {
         abstract: "Remove a key or all keys in a namespace"
     )
 
+    @OptionGroup var timingOpts: TimingOptions
+
     @Argument(help: "The namespace")
     var namespace: String
 
@@ -13,6 +15,8 @@ struct RemoveCommand: AsyncParsableCommand {
     var key: String?
 
     mutating func run() async throws {
+        timingOpts.apply()
+        defer { Timings.shared.report() }
         let store = CommandContext.shared.store
 
         if let key {
