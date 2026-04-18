@@ -19,13 +19,13 @@ struct SetCommand: AsyncParsableCommand {
         var pairs: [(String, String)] = []
         for key in keys {
             let prompt = "\(key): "
-            var buf = [CChar](repeating: 0, count: 1024)
-            guard let cstr = readpassphrase(prompt, &buf, buf.count, 0) else {
-                throw CleanExit.message("Failed to read value for \(key)")
-            }
-            let value = String(cString: cstr)
-            buf.withUnsafeMutableBufferPointer { ptr in
-                ptr.update(repeating: 0)
+            let value = try withUnsafeTemporaryAllocation(of: CChar.self, capacity: 1024) { buf -> String in
+                defer { buf.update(repeating: 0) }
+                guard let base = buf.baseAddress,
+                      let cstr = readpassphrase(prompt, base, buf.count, 0) else {
+                    throw CleanExit.message("Failed to read value for \(key)")
+                }
+                return String(cString: cstr)
             }
 
             guard !value.isEmpty else {

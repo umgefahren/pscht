@@ -41,7 +41,10 @@ enum Keychain {
     /// Pre-authenticate with Touch ID and return the context for keychain operations.
     /// Passing a biometrically-authenticated context to keychain queries satisfies
     /// .biometryCurrentSet items without additional prompts.
-    static func authContext(reason: String) async throws -> LAContext {
+    ///
+    /// If the surrounding Task is cancelled (e.g. Ctrl+C while the Touch ID sheet is up),
+    /// the LAContext is invalidated so the sheet dismisses and evaluatePolicy resolves.
+    static func authContext(reason: String) async throws(KeychainError) -> LAContext {
         let context = LAContext()
 
         var error: NSError?
@@ -49,18 +52,30 @@ enum Keychain {
             throw KeychainError.authFailed(error?.localizedDescription ?? "Biometrics not available")
         }
 
-        return try await withCheckedThrowingContinuation { continuation in
-            context.evaluatePolicy(
-                .deviceOwnerAuthenticationWithBiometrics,
-                localizedReason: "pscht: \(reason)"
-            ) { success, evaluateError in
-                if success {
-                    continuation.resume(returning: context)
-                } else {
-                    let message = (evaluateError as NSError?)?.localizedDescription ?? "authentication failed"
-                    continuation.resume(throwing: KeychainError.authFailed(message))
+        // withCheckedThrowingContinuation still only supports `any Error` in Swift 6.3,
+        // so we funnel through it and narrow back to KeychainError on the way out.
+        do {
+            return try await withTaskCancellationHandler {
+                try await withCheckedThrowingContinuation { continuation in
+                    context.evaluatePolicy(
+                        .deviceOwnerAuthenticationWithBiometrics,
+                        localizedReason: "pscht: \(reason)"
+                    ) { success, evaluateError in
+                        if success {
+                            continuation.resume(returning: context)
+                        } else {
+                            let message = (evaluateError as NSError?)?.localizedDescription ?? "authentication failed"
+                            continuation.resume(throwing: KeychainError.authFailed(message))
+                        }
+                    }
                 }
+            } onCancel: {
+                context.invalidate()
             }
+        } catch let error as KeychainError {
+            throw error
+        } catch {
+            throw KeychainError.authFailed(error.localizedDescription)
         }
     }
 
@@ -74,7 +89,7 @@ enum Keychain {
         value: String,
         biometricProtected: Bool = true,
         overwriteContext: LAContext? = nil
-    ) throws {
+    ) throws(KeychainError) {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.unexpectedData
         }
@@ -126,7 +141,7 @@ enum Keychain {
         }
     }
 
-    static func retrieve(namespace: String, key: String, context: LAContext? = nil, useDataProtection: Bool = true) throws -> String {
+    static func retrieve(namespace: String, key: String, context: LAContext? = nil, useDataProtection: Bool = true) throws(KeychainError) -> String {
         let service = serviceName(for: namespace)
 
         var query: [String: Any] = [
@@ -165,7 +180,7 @@ enum Keychain {
     }
 
     /// Retrieve all key-value pairs in a namespace with a single keychain query (one biometric prompt).
-    static func retrieveAll(namespace: String, context: LAContext? = nil) throws -> [(String, String)] {
+    static func retrieveAll(namespace: String, context: LAContext? = nil) throws(KeychainError) -> [(String, String)] {
         let service = serviceName(for: namespace)
 
         var query: [String: Any] = [
@@ -213,7 +228,7 @@ enum Keychain {
     /// Delete a secret. Requires an authenticated LAContext so that deletion cannot be used
     /// to silently destroy biometric-protected items (SecItemDelete does not consult the ACL
     /// on its own).
-    static func delete(namespace: String, key: String, context: LAContext) throws {
+    static func delete(namespace: String, key: String, context: LAContext) throws(KeychainError) {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -229,7 +244,7 @@ enum Keychain {
         }
     }
 
-    static func deleteAll(namespace: String, context: LAContext) throws {
+    static func deleteAll(namespace: String, context: LAContext) throws(KeychainError) {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -244,7 +259,7 @@ enum Keychain {
         }
     }
 
-    static func listKeys(namespace: String, useDataProtection: Bool = true) throws -> [String] {
+    static func listKeys(namespace: String, useDataProtection: Bool = true) throws(KeychainError) -> [String] {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -270,7 +285,7 @@ enum Keychain {
         }
     }
 
-    static func listNamespaces(useDataProtection: Bool = true) throws -> [String] {
+    static func listNamespaces(useDataProtection: Bool = true) throws(KeychainError) -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
