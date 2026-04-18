@@ -2,7 +2,7 @@
 
 Store secrets in the macOS Keychain with Touch ID protection. Like [envchain](https://github.com/sorah/envchain), but backed by biometrics.
 
-Secrets are organized into **namespaces** (e.g. `aws`, `github`, `production`). Each namespace holds one or more key-value pairs. Access is gated by Touch ID — no secret leaves the Keychain without your fingerprint.
+Secrets are organized into **namespaces** (e.g. `aws`, `github`, `production`). Each namespace holds one or more key-value pairs. Biometric protection is enforced at the Keychain level via `SecAccessControl` with `.biometryCurrentSet` — the OS itself prompts for Touch ID on every read, so the check cannot be bypassed by the calling process.
 
 ## Usage
 
@@ -10,13 +10,13 @@ Secrets are organized into **namespaces** (e.g. `aws`, `github`, `production`). 
 # Store secrets (prompts for values without echo)
 pscht set aws AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY
 
-# Retrieve a single secret (for shell variable assignment)
+# Retrieve a single secret (Touch ID prompted by the OS)
 set -gx API_KEY (pscht get myapp API_KEY)
 
 # Run a command with all secrets from a namespace injected as env vars
 pscht run aws -- aws s3 ls
 
-# Multiple namespaces at once
+# Multiple namespaces at once (single Touch ID prompt)
 pscht run aws,github -- some-tool
 
 # List all namespaces
@@ -28,31 +28,37 @@ pscht list aws
 # Remove a single key
 pscht remove aws AWS_ACCESS_KEY_ID
 
-# Remove an entire namespace
+# Remove an entire namespace (prompts for confirmation)
 pscht remove aws
 
-# Skip Touch ID (e.g. in scripts or CI)
-pscht get --no-bio aws AWS_ACCESS_KEY_ID
+# Store without biometric protection (e.g. for scripts or CI)
+pscht set --no-bio aws AWS_ACCESS_KEY_ID
+
+# Re-protect secrets originally stored without biometric ACLs
+pscht migrate
 ```
 
 ## Prerequisites
 
-- macOS (Apple Silicon or Intel)
+- macOS 14+ (Apple Silicon or Intel)
 - Xcode with Command Line Tools installed
-- An Apple Development certificate for code signing (free Apple ID works)
+- An Apple Developer account (free tier works) with:
+  - An **Apple Development** signing certificate
+  - A **provisioning profile** for the `dev.pscht` App ID
+
+Biometric Keychain ACLs require the data protection keychain, which in turn requires a signed app bundle with an embedded provisioning profile. Ad-hoc signing is not sufficient.
 
 ### Setting up code signing
 
-pscht needs a signed binary to access the macOS Keychain. A free Apple Developer account is sufficient:
-
 1. Open **Xcode** → Settings → Accounts → add your Apple ID
 2. Select your team → **Manage Certificates** → **+** → **Apple Development**
-3. If `security find-identity -v -p codesigning` shows `CSSMERR_TP_NOT_TRUSTED`, install the intermediate certificate:
+3. Register an App ID `dev.pscht` on [developer.apple.com](https://developer.apple.com/account/resources/identifiers) and download a development provisioning profile for it
+4. If `security find-identity -v -p codesigning` shows `CSSMERR_TP_NOT_TRUSTED`, install the WWDR intermediate:
    ```bash
    curl -O https://www.apple.com/certificateauthority/AppleWWDRCAG3.cer
    security add-certificates AppleWWDRCAG3.cer
    ```
-4. Verify: `security find-identity -v -p codesigning` should show a valid identity
+5. Verify: `security find-identity -v -p codesigning` should show a valid identity
 
 ## Installation
 
@@ -93,16 +99,23 @@ Then enable it in your home-manager config:
 
 ```nix
 {
-  programs.pscht.enable = true;
+  programs.pscht = {
+    enable = true;
 
-  # Optional: pin a specific signing identity (auto-detected by default)
-  # programs.pscht.signingIdentity = "Apple Development: Your Name (TEAMID)";
+    # Required: path to a provisioning profile for the dev.pscht App ID.
+    # Can be a plain path or a sops-managed secret.
+    provisioningProfile = "/path/to/pscht.provisionprofile";
+
+    # Optional: pin a specific signing identity (auto-detected by default)
+    # signingIdentity = "Apple Development: Your Name (TEAMID)";
+  };
 }
 ```
 
-This will:
-- Install the `pscht` binary
-- Code-sign it on every `home-manager switch` using your developer certificate
+On every `home-manager switch` this will:
+- Install the pscht app bundle to `~/.local/share/pscht/pscht.app`
+- Embed the provisioning profile, extract its entitlements, and code-sign the bundle
+- Install a wrapper on `$PATH` that invokes the signed bundle
 - Install fish shell completions with dynamic namespace/key suggestions
 
 ### Build from source
@@ -111,10 +124,26 @@ This will:
 git clone https://github.com/umgefahren/pscht.git
 cd pscht
 swift build -c release
-# Sign the binary
-codesign --force --sign "Apple Development: Your Name (TEAMID)" .build/release/pscht
-# Copy to your PATH
-cp .build/release/pscht ~/.local/bin/
+
+# Assemble the app bundle
+BUNDLE=.build/release/pscht.app/Contents
+mkdir -p "$BUNDLE/MacOS"
+cp .build/release/pscht "$BUNDLE/MacOS/pscht"
+cp Info.plist "$BUNDLE/Info.plist"
+
+# Embed the provisioning profile and extract its entitlements
+cp /path/to/pscht.provisionprofile "$BUNDLE/embedded.provisionprofile"
+security cms -D -i "$BUNDLE/embedded.provisionprofile" > /tmp/profile.plist
+/usr/libexec/PlistBuddy -c "Print :Entitlements" -x /tmp/profile.plist > /tmp/pscht.entitlements
+
+# Sign with the profile's entitlements
+codesign --force \
+  --sign "Apple Development: Your Name (TEAMID)" \
+  --entitlements /tmp/pscht.entitlements \
+  .build/release/pscht.app
+
+# Run via the bundle's executable
+.build/release/pscht.app/Contents/MacOS/pscht --help
 ```
 
 ## Architecture
@@ -122,61 +151,67 @@ cp .build/release/pscht ~/.local/bin/
 ```
 pscht
 ├── Sources/pscht/
-│   ├── pscht.swift              # Entry point, root command with subcommands
-│   ├── Keychain.swift           # macOS Keychain wrapper (Security framework)
-│   ├── BiometricOptions.swift   # Shared --no-bio flag via OptionGroup
+│   ├── pscht.swift                # Entry point, root command with subcommands
+│   ├── Keychain.swift             # macOS Keychain wrapper (Security framework)
+│   ├── BiometricOptions.swift     # Shared --no-bio flag via OptionGroup
 │   └── Commands/
-│       ├── SetCommand.swift     # Store secrets (readpassphrase, no echo)
-│       ├── GetCommand.swift     # Retrieve single secret to stdout
-│       ├── RunCommand.swift     # Spawn child process with secrets in env
-│       ├── ListCommand.swift    # List namespaces or keys
-│       └── RemoveCommand.swift  # Delete keys or namespaces
+│       ├── SetCommand.swift       # Store secrets (readpassphrase, no echo)
+│       ├── GetCommand.swift       # Retrieve single secret to stdout
+│       ├── RunCommand.swift       # Spawn child process with secrets in env
+│       ├── ListCommand.swift      # List namespaces or keys
+│       ├── RemoveCommand.swift    # Delete keys or namespaces
+│       └── MigrateCommand.swift   # Re-store legacy secrets with biometric ACL
 ├── completions/
-│   └── pscht.fish               # Fish completions with dynamic lookups
-├── flake.nix                    # Nix package + home-manager module
-├── pscht.entitlements            # Code signing entitlements
-└── Package.swift                # Swift 6.3, swift-argument-parser, swift-subprocess
+│   └── pscht.fish                 # Fish completions with dynamic lookups
+├── flake.nix                      # Nix package + home-manager module
+├── Info.plist                     # App bundle metadata (CFBundleIdentifier=dev.pscht)
+├── pscht.entitlements             # Placeholder entitlements (real ones come from the provisioning profile)
+└── Package.swift                  # Swift 6.3, swift-argument-parser, swift-subprocess
 ```
 
 ### How secrets are stored
 
-Secrets are stored as `kSecClassGenericPassword` items in the macOS Keychain:
+Secrets are stored as `kSecClassGenericPassword` items in the macOS **data protection keychain**:
 
 | Keychain attribute | Value |
 |---|---|
+| `kSecClass` | `kSecClassGenericPassword` |
 | `kSecAttrService` | `pscht.<namespace>` |
 | `kSecAttrAccount` | Key name (e.g. `AWS_SECRET_ACCESS_KEY`) |
 | `kSecValueData` | The secret value (UTF-8 encoded) |
-| `kSecAttrAccessible` | `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` |
+| `kSecUseDataProtectionKeychain` | `true` |
+| `kSecAttrAccessControl` *(biometric)* | `SecAccessControl(.biometryCurrentSet, kSecAttrAccessibleWhenPasscodeSetThisDeviceOnly)` |
+| `kSecAttrAccessible` *(non-biometric)* | `kSecAttrAccessibleWhenUnlockedThisDeviceOnly` |
 
-Items are scoped to the current device and only accessible when the device is unlocked.
+Items are scoped to the current device, invalidated if the enrolled biometric set changes, and require a device passcode to be set.
 
 ### How biometric auth works
 
-Touch ID is enforced at the application level via `LocalAuthentication.LAContext`:
+Touch ID is enforced **at the Keychain level** by the OS — not by the pscht process:
 
-1. Before any read or write, pscht calls `LAContext.evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)`
-2. The system presents the Touch ID prompt
-3. Only after successful authentication does pscht proceed to read/write the Keychain
-4. The `--no-bio` flag skips this step entirely
+1. pscht creates an `LAContext`, calls `evaluatePolicy(.deviceOwnerAuthenticationWithBiometrics)` once, and passes the authenticated context into the keychain query via `kSecUseAuthenticationContext`.
+2. The Security framework validates the Touch ID evaluation against each item's `SecAccessControl` and returns the plaintext only if it succeeds.
+3. Because the check is performed by the OS against an ACL attached to the item, it cannot be skipped by modifying the pscht binary or intercepting its calls.
 
-This approach works without restricted entitlements or provisioning profiles, unlike Keychain-level biometric access control (`SecAccessControlCreateWithFlags` with `.biometryCurrentSet`) which requires entitlements that aren't available to ad-hoc or development-signed CLI tools.
+`--no-bio` on `set` stores an item without a `SecAccessControl` ACL, so the Keychain will return it without any biometric check. The `get`, `list`, and `remove` commands have no `--no-bio` flag — whether a prompt appears is determined by how the item was stored.
+
+The `migrate` command reads items from the **legacy keychain** (items stored by older versions of pscht that didn't set `kSecUseDataProtectionKeychain`) and rewrites them into the data protection keychain with a biometric ACL.
 
 ### How `run` works
 
 The `run` command uses [swift-subprocess](https://github.com/swiftlang/swift-subprocess) to spawn a child process:
 
-1. Authenticate once via Touch ID
-2. Retrieve all keys from the requested namespace(s)
-3. Spawn the child process with secrets merged into the environment
-4. Pass through stdin, stdout, and stderr
-5. Forward the child's exit code
+1. Authenticate once via `LAContext.evaluatePolicy` — the user sees a single Touch ID prompt
+2. Issue a single `SecItemCopyMatching` query per namespace, using the authenticated context, so every biometric-protected item in the namespace is unlocked by that one prompt
+3. Merge the retrieved key-value pairs into the inherited environment
+4. Spawn the child command, passing through stdin, stdout, and stderr
+5. Forward the child's exit code (or `128 + signal` on termination by signal)
 
 ### Nix build
 
 The flake builds with Xcode's Swift 6.3 toolchain (nixpkgs only ships Swift 5.10). SwiftPM dependencies are pinned via `fetchFromGitHub` with a generated `workspace-state.json`. The build requires `__noChroot = true` for Xcode access.
 
-The output includes an unsigned binary (`pscht-unsigned`) and a wrapper script that auto-signs it with the first available codesigning identity on first run. The home-manager module goes further: it signs the binary to `~/.local/bin/pscht` on every activation.
+The derivation produces the pscht app bundle plus a `pscht-sign` helper script. The home-manager module invokes `pscht-sign` on every activation to embed the provisioning profile, extract its entitlements, and code-sign the bundle in `~/.local/share/pscht/pscht.app`. A thin wrapper on `$PATH` execs into the bundle.
 
 ## License
 
