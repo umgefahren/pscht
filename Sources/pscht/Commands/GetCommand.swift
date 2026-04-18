@@ -1,6 +1,6 @@
 import ArgumentParser
 
-struct GetCommand: ParsableCommand {
+struct GetCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "get",
         abstract: "Retrieve a single secret"
@@ -12,8 +12,8 @@ struct GetCommand: ParsableCommand {
     @Argument(help: "The key to retrieve")
     var key: String
 
-    mutating func run() throws {
-        let context = try Keychain.authContext(reason: "read '\(key)' from '\(namespace)'")
+    mutating func run() async throws {
+        let context = try await Keychain.authContext(reason: "read '\(key)' from '\(namespace)'")
         let value = try Keychain.retrieve(namespace: namespace, key: key, context: context)
         print(value, terminator: "")
     }

@@ -21,7 +21,7 @@ struct RunCommand: AsyncParsableCommand {
 
         let nsList = namespaces.split(separator: ",").map(String.init)
 
-        let context = try Keychain.authContext(
+        let context = try await Keychain.authContext(
             reason: "run with secrets from \(nsList.joined(separator: ", "))"
         )
 
@@ -33,6 +33,9 @@ struct RunCommand: AsyncParsableCommand {
                 envOverrides[Environment.Key(stringLiteral: key)] = value
             }
         }
+
+        let resolved = resolveExecutable(command[0])
+        FileHandle.standardError.write(Data("pscht: exec \(resolved)\n".utf8))
 
         let args = Arguments(command.dropFirst().map { String($0) })
 
@@ -51,5 +54,25 @@ struct RunCommand: AsyncParsableCommand {
         case .signaled(let signal):
             throw ExitCode(128 + signal)
         }
+    }
+
+    /// Resolve `name` against PATH the way `execvp` would, so we can show the user
+    /// exactly which binary is receiving their secrets. Returns the original name if
+    /// it's already a path or can't be resolved (Subprocess will surface any error).
+    private func resolveExecutable(_ name: String) -> String {
+        if name.contains("/") {
+            return name
+        }
+        guard let path = ProcessInfo.processInfo.environment["PATH"] else {
+            return name
+        }
+        let fm = FileManager.default
+        for dir in path.split(separator: ":", omittingEmptySubsequences: false) {
+            let candidate = dir.isEmpty ? name : "\(dir)/\(name)"
+            if fm.isExecutableFile(atPath: candidate) {
+                return candidate
+            }
+        }
+        return name
     }
 }

@@ -1,9 +1,10 @@
 import Foundation
 import Security
-import LocalAuthentication
+@preconcurrency import LocalAuthentication
 
 enum KeychainError: Error, CustomStringConvertible {
     case storeFailed(OSStatus)
+    case alreadyExists(namespace: String, key: String)
     case notFound(namespace: String, key: String)
     case authFailed(String)
     case unexpectedData
@@ -14,6 +15,8 @@ enum KeychainError: Error, CustomStringConvertible {
         switch self {
         case .storeFailed(let status):
             "Failed to store secret: \(SecCopyErrorMessageString(status, nil) ?? "OSStatus \(status)" as CFString)"
+        case .alreadyExists(let namespace, let key):
+            "Secret '\(key)' already exists in namespace '\(namespace)' (overwrite requires biometric auth)"
         case .notFound(let namespace, let key):
             "No secret found for '\(key)' in namespace '\(namespace)'"
         case .authFailed(let reason):
@@ -38,7 +41,7 @@ enum Keychain {
     /// Pre-authenticate with Touch ID and return the context for keychain operations.
     /// Passing a biometrically-authenticated context to keychain queries satisfies
     /// .biometryCurrentSet items without additional prompts.
-    static func authContext(reason: String) throws -> LAContext {
+    static func authContext(reason: String) async throws -> LAContext {
         let context = LAContext()
 
         var error: NSError?
@@ -46,43 +49,48 @@ enum Keychain {
             throw KeychainError.authFailed(error?.localizedDescription ?? "Biometrics not available")
         }
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var authError: NSError?
-
-        context.evaluatePolicy(
-            .deviceOwnerAuthenticationWithBiometrics,
-            localizedReason: "pscht: \(reason)"
-        ) { success, evaluateError in
-            if !success {
-                authError = evaluateError as NSError?
+        return try await withCheckedThrowingContinuation { continuation in
+            context.evaluatePolicy(
+                .deviceOwnerAuthenticationWithBiometrics,
+                localizedReason: "pscht: \(reason)"
+            ) { success, evaluateError in
+                if success {
+                    continuation.resume(returning: context)
+                } else {
+                    let message = (evaluateError as NSError?)?.localizedDescription ?? "authentication failed"
+                    continuation.resume(throwing: KeychainError.authFailed(message))
+                }
             }
-            semaphore.signal()
         }
-
-        semaphore.wait()
-
-        if let authError {
-            throw KeychainError.authFailed(authError.localizedDescription)
-        }
-
-        return context
     }
 
-    static func store(namespace: String, key: String, value: String, biometricProtected: Bool = true) throws {
+    /// Store a new secret, or overwrite an existing one if `overwriteContext` is provided.
+    /// Overwriting a biometric-protected item without a pre-authenticated context would be a
+    /// silent bypass of the ACL (SecItemDelete does not consult the ACL on macOS), so callers
+    /// must demonstrate user presence by passing an authenticated LAContext.
+    static func store(
+        namespace: String,
+        key: String,
+        value: String,
+        biometricProtected: Bool = true,
+        overwriteContext: LAContext? = nil
+    ) throws {
         guard let data = value.data(using: .utf8) else {
             throw KeychainError.unexpectedData
         }
 
         let service = serviceName(for: namespace)
 
-        // Delete existing item first (if any)
-        let deleteQuery: [String: Any] = [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: service,
-            kSecAttrAccount as String: key,
-            kSecUseDataProtectionKeychain as String: true,
-        ]
-        SecItemDelete(deleteQuery as CFDictionary)
+        if let overwriteContext {
+            let deleteQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: key,
+                kSecUseDataProtectionKeychain as String: true,
+                kSecUseAuthenticationContext as String: overwriteContext,
+            ]
+            SecItemDelete(deleteQuery as CFDictionary)
+        }
 
         var addQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -108,7 +116,12 @@ enum Keychain {
         }
 
         let status = SecItemAdd(addQuery as CFDictionary, nil)
-        guard status == errSecSuccess else {
+        switch status {
+        case errSecSuccess:
+            return
+        case errSecDuplicateItem:
+            throw KeychainError.alreadyExists(namespace: namespace, key: key)
+        default:
             throw KeychainError.storeFailed(status)
         }
     }
@@ -197,13 +210,17 @@ enum Keychain {
         }
     }
 
-    static func delete(namespace: String, key: String) throws {
+    /// Delete a secret. Requires an authenticated LAContext so that deletion cannot be used
+    /// to silently destroy biometric-protected items (SecItemDelete does not consult the ACL
+    /// on its own).
+    static func delete(namespace: String, key: String, context: LAContext) throws {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecUseDataProtectionKeychain as String: true,
+            kSecUseAuthenticationContext as String: context,
         ]
 
         let status = SecItemDelete(query as CFDictionary)
@@ -212,12 +229,13 @@ enum Keychain {
         }
     }
 
-    static func deleteAll(namespace: String) throws {
+    static func deleteAll(namespace: String, context: LAContext) throws {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecUseDataProtectionKeychain as String: true,
+            kSecUseAuthenticationContext as String: context,
         ]
 
         let status = SecItemDelete(query as CFDictionary)

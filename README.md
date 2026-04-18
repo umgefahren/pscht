@@ -193,7 +193,13 @@ Touch ID is enforced **at the Keychain level** by the OS — not by the pscht pr
 2. The Security framework validates the Touch ID evaluation against each item's `SecAccessControl` and returns the plaintext only if it succeeds.
 3. Because the check is performed by the OS against an ACL attached to the item, it cannot be skipped by modifying the pscht binary or intercepting its calls.
 
-`--no-bio` on `set` stores an item without a `SecAccessControl` ACL, so the Keychain will return it without any biometric check. The `get`, `list`, and `remove` commands have no `--no-bio` flag — whether a prompt appears is determined by how the item was stored.
+`--no-bio` on `set` stores an item without a `SecAccessControl` ACL, so the Keychain will return it without any biometric check. The `get` and `remove` commands have no `--no-bio` flag — a biometric prompt is always required. `list` never prompts.
+
+### What biometric auth does *not* protect
+
+- **Namespace and key names are not confidential.** `list` and `list <namespace>` return them without prompting, because the Keychain query asks only for `kSecAttrService` / `kSecAttrAccount` and doesn't touch `kSecValueData`. Don't encode secrets into key names.
+- **Secret values are not confidential once injected via `run`.** A child process started via `pscht run` inherits the secrets as environment variables, and so does every descendant in its process tree. Other processes running as the same UID can read that environment (e.g. `ps eww`). Use `run` only to feed trusted commands; don't use it to pass secrets to sandboxed or multi-tenant workloads.
+- **Biometric auth is required to overwrite or delete a secret** (since pscht 0.1.x) — `SecItemDelete` on its own does not consult the item's ACL, so pscht pre-authenticates an `LAContext` before any destructive keychain operation.
 
 The `migrate` command reads items from the **legacy keychain** (items stored by older versions of pscht that didn't set `kSecUseDataProtectionKeychain`) and rewrites them into the data protection keychain with a biometric ACL.
 

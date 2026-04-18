@@ -1,7 +1,7 @@
 import ArgumentParser
 import Darwin
 
-struct SetCommand: ParsableCommand {
+struct SetCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "set",
         abstract: "Store secrets in a namespace"
@@ -15,8 +15,7 @@ struct SetCommand: ParsableCommand {
     @Argument(help: "One or more key names to set")
     var keys: [String]
 
-    mutating func run() throws {
-        // Collect all values first, before authenticating
+    mutating func run() async throws {
         var pairs: [(String, String)] = []
         for key in keys {
             let prompt = "\(key): "
@@ -35,8 +34,24 @@ struct SetCommand: ParsableCommand {
             pairs.append((key, value))
         }
 
+        let existing = Set(try Keychain.listKeys(namespace: namespace))
+        let overwriting = keys.filter { existing.contains($0) }
+
+        let overwriteContext = try await overwriting.isEmpty
+            ? nil
+            : Keychain.authContext(
+                reason: "overwrite \(overwriting.count) existing secret(s) in '\(namespace)'"
+            )
+
         for (key, value) in pairs {
-            try Keychain.store(namespace: namespace, key: key, value: value, biometricProtected: !bio.noBio)
+            let ctx = existing.contains(key) ? overwriteContext : nil
+            try Keychain.store(
+                namespace: namespace,
+                key: key,
+                value: value,
+                biometricProtected: !bio.noBio,
+                overwriteContext: ctx
+            )
         }
     }
 }
