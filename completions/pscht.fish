@@ -35,13 +35,17 @@ function __pscht_parse_tokens -S
         case 'set'
             __pscht_parse_subcommand -r 2 'no-bio' 'h/help'
         case 'get'
-            __pscht_parse_subcommand 2 'no-bio' 'h/help'
+            __pscht_parse_subcommand 2 'h/help'
         case 'run'
-            __pscht_parse_subcommand -r 2 'no-bio' 'h/help'
+            __pscht_parse_subcommand -r 2 'h/help'
         case 'list'
             __pscht_parse_subcommand 1 'h/help'
         case 'remove'
             __pscht_parse_subcommand 2 'h/help'
+        case 'init'
+            __pscht_parse_subcommand 0 'no-pin' 'h/help'
+        case 'rekey'
+            __pscht_parse_subcommand 0 'change-pin' 'to-presence' 'to-pin' 'h/help'
         case 'help'
             __pscht_parse_subcommand -r 1
         end
@@ -87,7 +91,9 @@ end
 # --- Dynamic completions for namespaces and keys ---
 
 function __pscht_list_namespaces
-    pscht list --no-bio 2>/dev/null
+    # On macOS: Keychain metadata query — no biometric prompt.
+    # On Linux: reads index.json from the data dir — no TPM unseal.
+    pscht list 2>/dev/null
 end
 
 function __pscht_get_namespace_from_args
@@ -107,7 +113,7 @@ end
 function __pscht_list_keys
     set -l ns (__pscht_get_namespace_from_args)
     if test -n "$ns"
-        pscht list --no-bio $ns 2>/dev/null
+        pscht list $ns 2>/dev/null
     end
 end
 
@@ -120,17 +126,23 @@ complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 1' -fa 'run' -d 'Run a command with secrets as environment variables'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 1' -fa 'list' -d 'List namespaces or keys within a namespace'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 1' -fa 'remove' -d 'Remove a key or all keys in a namespace'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 1' -fa 'init' -d 'Initialize a new TPM2-sealed vault (Linux)'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 1' -fa 'rekey' -d 'Rotate the TPM-sealed master key (Linux)'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht" 1' -fa 'help' -d 'Show subcommand help information.'
 
 # Flags
-complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht set" no-bio' -l 'no-bio' -d 'Skip biometric authentication'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht set" no-bio' -l 'no-bio' -d 'Skip biometric authentication (macOS)'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht set" h help' -s 'h' -l 'help' -d 'Show help information.'
-complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht get" no-bio' -l 'no-bio' -d 'Skip biometric authentication'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht get" h help' -s 'h' -l 'help' -d 'Show help information.'
-complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht run" no-bio' -l 'no-bio' -d 'Skip biometric authentication'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht run" h help' -s 'h' -l 'help' -d 'Show help information.'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht list" h help' -s 'h' -l 'help' -d 'Show help information.'
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht remove" h help' -s 'h' -l 'help' -d 'Show help information.'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht init" no-pin' -l 'no-pin' -d 'Skip PIN entry; seal with presence only'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht init" h help' -s 'h' -l 'help' -d 'Show help information.'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht rekey" change-pin' -l 'change-pin' -d 'Prompt for a new PIN'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht rekey" to-presence' -l 'to-presence' -d 'Switch to presence-only (no PIN)'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht rekey" to-pin' -l 'to-pin' -d 'Switch to PIN mode (prompts for new PIN)'
+complete -c 'pscht' -n '__pscht_should_offer_completions_for_flags_or_options "pscht rekey" h help' -s 'h' -l 'help' -d 'Show help information.'
 
 # Dynamic namespace completions (1st positional arg for set, get, run, list, remove)
 complete -c 'pscht' -n '__pscht_should_offer_completions_for_positional "pscht set" 1' -fa '(__pscht_list_namespaces)' -d 'namespace'

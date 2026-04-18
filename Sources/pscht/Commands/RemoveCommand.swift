@@ -13,20 +13,22 @@ struct RemoveCommand: AsyncParsableCommand {
     var key: String?
 
     mutating func run() async throws {
+        let store = CommandContext.shared.store
+
         if let key {
-            let context = try await Keychain.authContext(
+            let session = try await store.beginSession(
                 reason: "delete '\(key)' from '\(namespace)'"
             )
-            try Keychain.delete(namespace: namespace, key: key, context: context)
+            try await store.delete(namespace: namespace, key: key, session: session)
         } else {
             print("Remove all keys in namespace '\(namespace)'? [y/N] ", terminator: "")
             guard let answer = readLine(), answer.lowercased() == "y" else {
                 throw CleanExit.message("Aborted")
             }
-            let context = try await Keychain.authContext(
+            let session = try await store.beginSession(
                 reason: "delete all secrets in '\(namespace)'"
             )
-            try Keychain.deleteAll(namespace: namespace, context: context)
+            try await store.deleteAll(namespace: namespace, session: session)
         }
     }
 }

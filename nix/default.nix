@@ -3,7 +3,10 @@
   workspaceStateFile = ./workspace-state.json;
   hashes = {
     "swift-argument-parser" = "sha256-90ECc3iEmxvOUk9iLKbQdQEz88dOisPqWsJLOFcKUV8=";
+    "swift-asn1" = "sha256-IGFtbWfsGLOkrqIoVYNSh4gZGbWAsGHoUWOojHfL8QI=";
+    "swift-crypto" = "sha256-RzoUBx4l12v0ZamSIAEpHHCRQXxJkXJCwVBEj7Qwg9I=";
     "swift-subprocess" = "sha256-8Ujur2TwISoXo9LZ2Kev8v0uGx/RZyJqyZ4sNi7Q6/4=";
     "swift-system" = "sha256-bfxm2WS+4qcgSzheWTvRloDAIIIHzPZ8SaAZq9bWmSc=";
+    "TOMLKit" = "sha256-1aSH9Ze9rkk0EEDNoBlc/B6iXRmMx98ySOqhpfvQY2I=";
   };
 }

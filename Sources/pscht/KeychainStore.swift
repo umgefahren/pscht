@@ -1,59 +1,43 @@
+#if os(macOS)
 import Foundation
 import Security
 @preconcurrency import LocalAuthentication
 
-enum KeychainError: Error, CustomStringConvertible {
-    case storeFailed(OSStatus)
-    case alreadyExists(namespace: String, key: String)
-    case notFound(namespace: String, key: String)
-    case authFailed(String)
-    case unexpectedData
-    case deleteFailed(OSStatus)
-    case queryFailed(OSStatus)
-
-    var description: String {
-        switch self {
-        case .storeFailed(let status):
-            "Failed to store secret: \(SecCopyErrorMessageString(status, nil) ?? "OSStatus \(status)" as CFString)"
-        case .alreadyExists(let namespace, let key):
-            "Secret '\(key)' already exists in namespace '\(namespace)' (overwrite requires biometric auth)"
-        case .notFound(let namespace, let key):
-            "No secret found for '\(key)' in namespace '\(namespace)'"
-        case .authFailed(let reason):
-            "Authentication failed: \(reason)"
-        case .unexpectedData:
-            "Unexpected data format in keychain"
-        case .deleteFailed(let status):
-            "Failed to delete secret: \(SecCopyErrorMessageString(status, nil) ?? "OSStatus \(status)" as CFString)"
-        case .queryFailed(let status):
-            "Keychain query failed: \(SecCopyErrorMessageString(status, nil) ?? "OSStatus \(status)" as CFString)"
-        }
-    }
-}
-
-enum Keychain {
+/// macOS Keychain-backed SecretStore.
+///
+/// Secrets are stored as `kSecClassGenericPassword` items with service
+/// `pscht.<namespace>` and account = key. Biometric protection is
+/// enforced by the OS via `SecAccessControl` with `.biometryCurrentSet`
+/// — pscht itself is never trusted to gate access.
+struct KeychainStore: SecretStore {
     private static let servicePrefix = "pscht."
 
-    private static func serviceName(for namespace: String) -> String {
-        "\(servicePrefix)\(namespace)"
+    private func serviceName(for namespace: String) -> String {
+        "\(Self.servicePrefix)\(namespace)"
     }
 
-    /// Pre-authenticate with Touch ID and return the context for keychain operations.
-    /// Passing a biometrically-authenticated context to keychain queries satisfies
-    /// .biometryCurrentSet items without additional prompts.
-    ///
-    /// If the surrounding Task is cancelled (e.g. Ctrl+C while the Touch ID sheet is up),
-    /// the LAContext is invalidated so the sheet dismisses and evaluatePolicy resolves.
-    static func authContext(reason: String) async throws(KeychainError) -> LAContext {
+    /// The session is just the authenticated `LAContext`. Subsequent
+    /// keychain queries that pass it via `kSecUseAuthenticationContext`
+    /// satisfy biometric ACLs without re-prompting.
+    struct Session: SecretStoreSession {
+        let context: LAContext
+    }
+
+    func beginSession(reason: String) async throws -> any SecretStoreSession {
+        try await Session(context: authContext(reason: reason))
+    }
+
+    /// Pre-authenticate with Touch ID. If the surrounding Task is cancelled
+    /// (Ctrl+C while the sheet is up), invalidate the context so the sheet
+    /// dismisses and `evaluatePolicy` resolves.
+    private func authContext(reason: String) async throws(SecretStoreError) -> LAContext {
         let context = LAContext()
 
         var error: NSError?
         guard context.canEvaluatePolicy(.deviceOwnerAuthenticationWithBiometrics, error: &error) else {
-            throw KeychainError.authFailed(error?.localizedDescription ?? "Biometrics not available")
+            throw .authFailed(error?.localizedDescription ?? "Biometrics not available")
         }
 
-        // withCheckedThrowingContinuation still only supports `any Error` in Swift 6.3,
-        // so we funnel through it and narrow back to KeychainError on the way out.
         do {
             return try await withTaskCancellationHandler {
                 try await withCheckedThrowingContinuation { continuation in
@@ -65,33 +49,50 @@ enum Keychain {
                             continuation.resume(returning: context)
                         } else {
                             let message = (evaluateError as NSError?)?.localizedDescription ?? "authentication failed"
-                            continuation.resume(throwing: KeychainError.authFailed(message))
+                            continuation.resume(throwing: SecretStoreError.authFailed(message))
                         }
                     }
                 }
             } onCancel: {
                 context.invalidate()
             }
-        } catch let error as KeychainError {
+        } catch let error as SecretStoreError {
             throw error
         } catch {
-            throw KeychainError.authFailed(error.localizedDescription)
+            throw .authFailed(error.localizedDescription)
         }
     }
 
-    /// Store a new secret, or overwrite an existing one if `overwriteContext` is provided.
-    /// Overwriting a biometric-protected item without a pre-authenticated context would be a
-    /// silent bypass of the ACL (SecItemDelete does not consult the ACL on macOS), so callers
-    /// must demonstrate user presence by passing an authenticated LAContext.
-    static func store(
+    func store(
+        namespace: String,
+        key: String,
+        value: String,
+        options: StoreOptions,
+        session: (any SecretStoreSession)?
+    ) async throws {
+        try storeSync(
+            namespace: namespace,
+            key: key,
+            value: value,
+            biometricProtected: options.biometricProtected,
+            overwriteContext: (session as? Session)?.context
+        )
+    }
+
+    /// Store a new secret, or overwrite an existing one if an authenticated
+    /// context is provided. Overwriting a biometric-protected item without
+    /// a pre-auth'd context would be a silent ACL bypass (SecItemDelete
+    /// does not consult the ACL on macOS), so callers must demonstrate user
+    /// presence by passing one.
+    func storeSync(
         namespace: String,
         key: String,
         value: String,
         biometricProtected: Bool = true,
         overwriteContext: LAContext? = nil
-    ) throws(KeychainError) {
+    ) throws(SecretStoreError) {
         guard let data = value.data(using: .utf8) else {
-            throw KeychainError.unexpectedData
+            throw .unexpectedData
         }
 
         let service = serviceName(for: namespace)
@@ -122,7 +123,7 @@ enum Keychain {
                 .biometryCurrentSet,
                 &error
             ) else {
-                throw KeychainError.storeFailed(errSecParam)
+                throw .storeFailed(Self.describe(errSecParam))
             }
             addQuery[kSecAttrAccessControl as String] = access
         } else {
@@ -135,13 +136,25 @@ enum Keychain {
         case errSecSuccess:
             return
         case errSecDuplicateItem:
-            throw KeychainError.alreadyExists(namespace: namespace, key: key)
+            throw .alreadyExists(namespace: namespace, key: key)
         default:
-            throw KeychainError.storeFailed(status)
+            throw .storeFailed(Self.describe(status))
         }
     }
 
-    static func retrieve(namespace: String, key: String, context: LAContext? = nil, useDataProtection: Bool = true) throws(KeychainError) -> String {
+    func retrieve(namespace: String, key: String, session: any SecretStoreSession) async throws -> String {
+        guard let s = session as? Session else {
+            throw SecretStoreError.sessionRequired("retrieve")
+        }
+        return try retrieveSync(namespace: namespace, key: key, context: s.context)
+    }
+
+    func retrieveSync(
+        namespace: String,
+        key: String,
+        context: LAContext? = nil,
+        useDataProtection: Bool = true
+    ) throws(SecretStoreError) -> String {
         let service = serviceName(for: namespace)
 
         var query: [String: Any] = [
@@ -163,38 +176,37 @@ enum Keychain {
         switch status {
         case errSecSuccess:
             guard let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-                throw KeychainError.unexpectedData
+                throw .unexpectedData
             }
             return value
         case errSecItemNotFound:
-            throw KeychainError.notFound(namespace: namespace, key: key)
+            throw .notFound(namespace: namespace, key: key)
         case errSecAuthFailed:
-            throw KeychainError.authFailed("authentication failed")
+            throw .authFailed("authentication failed")
         case errSecUserCanceled:
-            throw KeychainError.authFailed("cancelled")
+            throw .authCancelled
         case errSecInteractionNotAllowed:
-            throw KeychainError.authFailed("interaction not allowed")
+            throw .authFailed("interaction not allowed")
         default:
-            throw KeychainError.queryFailed(status)
+            throw .queryFailed(Self.describe(status))
         }
     }
 
-    /// Retrieve all key-value pairs in a namespace with a single keychain query (one biometric prompt).
-    static func retrieveAll(namespace: String, context: LAContext? = nil) throws(KeychainError) -> [(String, String)] {
+    func retrieveAll(namespace: String, session: any SecretStoreSession) async throws -> [(String, String)] {
+        guard let s = session as? Session else {
+            throw SecretStoreError.sessionRequired("retrieveAll")
+        }
         let service = serviceName(for: namespace)
 
-        var query: [String: Any] = [
+        let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecMatchLimit as String: kSecMatchLimitAll,
             kSecReturnAttributes as String: true,
             kSecReturnData as String: true,
             kSecUseDataProtectionKeychain as String: true,
+            kSecUseAuthenticationContext as String: s.context,
         ]
-
-        if let context {
-            query[kSecUseAuthenticationContext as String] = context
-        }
 
         var result: AnyObject?
         let status = SecItemCopyMatching(query as CFDictionary, &result)
@@ -215,51 +227,58 @@ enum Keychain {
         case errSecItemNotFound:
             return []
         case errSecAuthFailed:
-            throw KeychainError.authFailed("authentication failed")
+            throw SecretStoreError.authFailed("authentication failed")
         case errSecUserCanceled:
-            throw KeychainError.authFailed("cancelled")
+            throw SecretStoreError.authCancelled
         case errSecInteractionNotAllowed:
-            throw KeychainError.authFailed("interaction not allowed")
+            throw SecretStoreError.authFailed("interaction not allowed")
         default:
-            throw KeychainError.queryFailed(status)
+            throw SecretStoreError.queryFailed(Self.describe(status))
         }
     }
 
-    /// Delete a secret. Requires an authenticated LAContext so that deletion cannot be used
-    /// to silently destroy biometric-protected items (SecItemDelete does not consult the ACL
-    /// on its own).
-    static func delete(namespace: String, key: String, context: LAContext) throws(KeychainError) {
+    func delete(namespace: String, key: String, session: any SecretStoreSession) async throws {
+        guard let s = session as? Session else {
+            throw SecretStoreError.sessionRequired("delete")
+        }
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: key,
             kSecUseDataProtectionKeychain as String: true,
-            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationContext as String: s.context,
         ]
 
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.deleteFailed(status)
+            throw SecretStoreError.deleteFailed(Self.describe(status))
         }
     }
 
-    static func deleteAll(namespace: String, context: LAContext) throws(KeychainError) {
+    func deleteAll(namespace: String, session: any SecretStoreSession) async throws {
+        guard let s = session as? Session else {
+            throw SecretStoreError.sessionRequired("deleteAll")
+        }
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecUseDataProtectionKeychain as String: true,
-            kSecUseAuthenticationContext as String: context,
+            kSecUseAuthenticationContext as String: s.context,
         ]
 
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
-            throw KeychainError.deleteFailed(status)
+            throw SecretStoreError.deleteFailed(Self.describe(status))
         }
     }
 
-    static func listKeys(namespace: String, useDataProtection: Bool = true) throws(KeychainError) -> [String] {
+    func listKeys(namespace: String) async throws -> [String] {
+        try listKeysSync(namespace: namespace)
+    }
+
+    func listKeysSync(namespace: String, useDataProtection: Bool = true) throws(SecretStoreError) -> [String] {
         let service = serviceName(for: namespace)
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
@@ -281,11 +300,15 @@ enum Keychain {
         case errSecItemNotFound:
             return []
         default:
-            throw KeychainError.queryFailed(status)
+            throw .queryFailed(Self.describe(status))
         }
     }
 
-    static func listNamespaces(useDataProtection: Bool = true) throws(KeychainError) -> [String] {
+    func listNamespaces() async throws -> [String] {
+        try listNamespacesSync()
+    }
+
+    func listNamespacesSync(useDataProtection: Bool = true) throws(SecretStoreError) -> [String] {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecMatchLimit as String: kSecMatchLimitAll,
@@ -304,15 +327,21 @@ enum Keychain {
             var namespaces = Set<String>()
             for item in items {
                 if let service = item[kSecAttrService as String] as? String,
-                   service.hasPrefix(servicePrefix) {
-                    namespaces.insert(String(service.dropFirst(servicePrefix.count)))
+                   service.hasPrefix(Self.servicePrefix) {
+                    namespaces.insert(String(service.dropFirst(Self.servicePrefix.count)))
                 }
             }
             return namespaces.sorted()
         case errSecItemNotFound:
             return []
         default:
-            throw KeychainError.queryFailed(status)
+            throw .queryFailed(Self.describe(status))
         }
     }
+
+    /// Turn an OSStatus into a human-readable string via SecCopyErrorMessageString.
+    private static func describe(_ status: OSStatus) -> String {
+        (SecCopyErrorMessageString(status, nil) as String?) ?? "OSStatus \(status)"
+    }
 }
+#endif

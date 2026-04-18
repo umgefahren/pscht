@@ -20,15 +20,16 @@ struct RunCommand: AsyncParsableCommand {
         }
 
         let nsList = namespaces.split(separator: ",").map(String.init)
+        let store = CommandContext.shared.store
 
-        let context = try await Keychain.authContext(
+        let session = try await store.beginSession(
             reason: "run with secrets from \(nsList.joined(separator: ", "))"
         )
 
         var envOverrides: [Environment.Key: String?] = [:]
 
         for ns in nsList {
-            let pairs = try Keychain.retrieveAll(namespace: ns, context: context)
+            let pairs = try await store.retrieveAll(namespace: ns, session: session)
             for (key, value) in pairs {
                 envOverrides[Environment.Key(stringLiteral: key)] = value
             }

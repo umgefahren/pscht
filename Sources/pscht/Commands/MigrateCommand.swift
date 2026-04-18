@@ -1,3 +1,4 @@
+#if os(macOS)
 import ArgumentParser
 
 struct MigrateCommand: ParsableCommand {
@@ -7,8 +8,8 @@ struct MigrateCommand: ParsableCommand {
     )
 
     mutating func run() throws {
-        // Read from legacy keychain, write to data protection keychain
-        let namespaces = try Keychain.listNamespaces(useDataProtection: false)
+        let store = KeychainStore()
+        let namespaces = try store.listNamespacesSync(useDataProtection: false)
 
         guard !namespaces.isEmpty else {
             print("No namespaces found, nothing to migrate.")
@@ -17,10 +18,19 @@ struct MigrateCommand: ParsableCommand {
 
         var total = 0
         for ns in namespaces {
-            let keys = try Keychain.listKeys(namespace: ns, useDataProtection: false)
+            let keys = try store.listKeysSync(namespace: ns, useDataProtection: false)
             for key in keys {
-                let value = try Keychain.retrieve(namespace: ns, key: key, useDataProtection: false)
-                try Keychain.store(namespace: ns, key: key, value: value, biometricProtected: true)
+                let value = try store.retrieveSync(
+                    namespace: ns,
+                    key: key,
+                    useDataProtection: false
+                )
+                try store.storeSync(
+                    namespace: ns,
+                    key: key,
+                    value: value,
+                    biometricProtected: true
+                )
                 total += 1
             }
             print("Migrated \(ns): \(keys.count) key\(keys.count == 1 ? "" : "s")")
@@ -29,3 +39,4 @@ struct MigrateCommand: ParsableCommand {
         print("Done. \(total) secret\(total == 1 ? "" : "s") now protected with biometric ACL.")
     }
 }
+#endif

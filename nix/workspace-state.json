@@ -22,10 +22,44 @@
       {
         "basedOn": null,
         "packageRef": {
+          "identity": "swift-asn1",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/apple/swift-asn1.git",
+          "name": "swift-asn1"
+        },
+        "state": {
+          "checkoutState": {
+            "revision": "eb50cbd14606a9161cbc5d452f18797c90ef0bab",
+            "version": "1.7.0"
+          },
+          "name": "sourceControlCheckout"
+        },
+        "subpath": "swift-asn1"
+      },
+      {
+        "basedOn": null,
+        "packageRef": {
+          "identity": "swift-crypto",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/apple/swift-crypto.git",
+          "name": "swift-crypto"
+        },
+        "state": {
+          "checkoutState": {
+            "revision": "95ba0316a9b733e92bb6b071255ff46263bbe7dc",
+            "version": "3.15.1"
+          },
+          "name": "sourceControlCheckout"
+        },
+        "subpath": "swift-crypto"
+      },
+      {
+        "basedOn": null,
+        "packageRef": {
           "identity": "swift-subprocess",
           "kind": "remoteSourceControl",
           "location": "https://github.com/swiftlang/swift-subprocess.git",
-          "name": "Subprocess"
+          "name": "swift-subprocess"
         },
         "state": {
           "checkoutState": {
@@ -52,6 +86,23 @@
           "name": "sourceControlCheckout"
         },
         "subpath": "swift-system"
+      },
+      {
+        "basedOn": null,
+        "packageRef": {
+          "identity": "tomlkit",
+          "kind": "remoteSourceControl",
+          "location": "https://github.com/LebJe/TOMLKit.git",
+          "name": "TOMLKit"
+        },
+        "state": {
+          "checkoutState": {
+            "revision": "ec6198d37d495efc6acd4dffbd262cdca7ff9b3f",
+            "version": "0.6.0"
+          },
+          "name": "sourceControlCheckout"
+        },
+        "subpath": "TOMLKit"
       }
     ],
     "prebuilts": []

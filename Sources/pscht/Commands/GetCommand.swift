@@ -13,8 +13,9 @@ struct GetCommand: AsyncParsableCommand {
     var key: String
 
     mutating func run() async throws {
-        let context = try await Keychain.authContext(reason: "read '\(key)' from '\(namespace)'")
-        let value = try Keychain.retrieve(namespace: namespace, key: key, context: context)
+        let store = CommandContext.shared.store
+        let session = try await store.beginSession(reason: "read '\(key)' from '\(namespace)'")
+        let value = try await store.retrieve(namespace: namespace, key: key, session: session)
         print(value, terminator: "")
     }
 }
