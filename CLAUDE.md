@@ -62,7 +62,7 @@ Each command is a `swift-argument-parser` subcommand in `Sources/pscht/Commands/
 
 `flake.nix` exposes:
 - `packages.<system>.pscht` — macOS bundle (code-signed by home-manager activation) or Linux `makeWrapper` binary with `tpm2-tools` on PATH and `libargon2` linked.
-- `homeManagerModules.pscht` — cross-platform; writes `~/.config/pscht/config.toml` declaratively from `programs.pscht.{backend, dataDir, tpm2.*, signingIdentity, provisioningProfile}`. macOS-only code-signing activation is gated on `pkgs.stdenv.isDarwin`.
+- `homeManagerModules.pscht` — cross-platform; writes `~/.config/pscht/config.toml` declaratively from `programs.pscht.{backend, dataDir, tpm2.*, signingIdentity, provisioningProfile}`. macOS-only code-signing activation is gated on `pkgs.stdenv.hostPlatform.isDarwin`.
 - `nixosModules.pscht` — Linux-only; system-wide install + optional `tss` group / udev rules for `/dev/tpmrm0` access.
 
 The flake uses swiftix (at `github:stillwind-ai/swiftix`) for Swift 6.3 — nixpkgs only ships 5.10. The Linux devShell wires the Swift-bundled clang via `CC`, plus libstdc++ includes (for swift-crypto's BoringSSL) and libc paths.

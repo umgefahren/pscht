@@ -116,7 +116,7 @@ WRAPPER
             };
 
           pschtPackage =
-            if pkgs.stdenv.isDarwin
+            if pkgs.stdenv.hostPlatform.isDarwin
             then darwinBundle
             else linuxPackage;
         in
@@ -138,8 +138,8 @@ WRAPPER
         let
           cfg = config.programs.pscht;
           system = pkgs.stdenv.hostPlatform.system;
-          isDarwin = pkgs.stdenv.isDarwin;
-          isLinux = pkgs.stdenv.isLinux;
+          isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
+          isLinux = pkgs.stdenv.hostPlatform.isLinux;
 
           effectiveBackend =
             if cfg.backend == "auto"
@@ -368,7 +368,7 @@ WRAPPER
         let
           pkgs = nixpkgs.legacyPackages.${system};
           swift = swiftix.packages.${system}.swift-6_3;
-          isDarwin = pkgs.stdenv.isDarwin;
+          isDarwin = pkgs.stdenv.hostPlatform.isDarwin;
         in
         {
           default = pkgs.mkShell {

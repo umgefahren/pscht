@@ -43,11 +43,11 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1777755253,
-        "narHash": "sha256-jDrVUN+ieBD9VA4IDx5/gfrE63fJdb2JQgQW0Pvckzw=",
+        "lastModified": 1788444178,
+        "narHash": "sha256-JnD5U3ILX5PFKRRAZTi+peLYPnU3soCZPwqBiV1RzT0=",
         "owner": "stillwind-ai",
         "repo": "swiftix",
-        "rev": "ea4b20ba4f78032a4af37f350d3af57b192cbfcf",
+        "rev": "0d592e31b2386bdf10e2c32ce6f42b57ccbf22b0",
         "type": "github"
       },
       "original": {
